@@ -1,0 +1,24 @@
+{
+  "name": "@butler/order-engine",
+  "version": "1.0.0",
+  "description": "Order management engine for Cheeron",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "jest"
+  },
+  "dependencies": {
+    "node-cache": "^5.1.2",
+    "nanoid": "^3.3.4",
+    "pg": "^8.11.3",
+    "redis": "^4.6.13",
+    "socket.io": "^4.7.4",
+    "firebase-admin": "^12.0.0",
+    "uuid": "^9.0.1"
+  },
+  "peerDependencies": {
+    "express": "^4.18.0"
+  },
+  "files": [
+    "src"
+  ]
+} 
