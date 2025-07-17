@@ -162,7 +162,7 @@ const createOrUpdateOrder = async (req, res) => {
 
     const { restaurantId, tableId, items, instructions, 
         userId, otpCheck, orderType = "Dine In", 
-        captainId , selectedOffer = '',isPlacingOffer = false, forceNewOrder = false } = req.body;
+        captainId , selectedOffer = '',isPlacingOffer = false, forceNewOrder = false, orderId: providedOrderId } = req.body;
 
     const uniqueKey = new Date().getTime(); // Generate a unique key using the current timestamp
     let orderId;
@@ -223,11 +223,26 @@ const createOrUpdateOrder = async (req, res) => {
 
         let latestOrder = {};
         let existingInstructions = "";
-        if (orderResult.rows.length > 0 && !forceNewOrder) {
+        
+        // If a specific orderId is provided, use it (for scenarios like moving orders or split bills)
+        if (providedOrderId) {
+            orderId = providedOrderId;
+            // Check if this specific order already exists
+            const specificOrderResult = await pool.query(
+                'SELECT * FROM orders WHERE restaurant_id = $1 AND id = $2', 
+                [restaurantId, providedOrderId]
+            );
+            if (specificOrderResult.rows.length > 0) {
+                latestOrder = specificOrderResult.rows[0].json_data.items || {};
+                existingInstructions = specificOrderResult.rows[0].instructions || "";
+            }
+        } else if (orderResult.rows.length > 0 && !forceNewOrder) {
+            // Use existing order on the table
             orderId = orderResult.rows[0].id;
             latestOrder = orderResult.rows[0].json_data.items || {};
             existingInstructions = orderResult.rows[0].instructions || "";
         } else {
+            // Generate new orderId
             orderId = `${restaurantId}-${tableId}-${uniqueKey}`;
         }
 
@@ -299,7 +314,12 @@ const createOrUpdateOrder = async (req, res) => {
         // }
 
 
-        if (orderResult.rows.length === 0 || forceNewOrder) {
+        // Check if we need to create a new order or update existing one
+        const shouldCreateNewOrder = (orderResult.rows.length === 0 || forceNewOrder) && !providedOrderId;
+        const shouldUpdateExistingOrder = (orderResult.rows.length > 0 && !forceNewOrder) || providedOrderId;
+        
+        if (shouldCreateNewOrder) {
+            // Create new order with generated orderId
             await pool.query(
                 'INSERT INTO orders (id, restaurant_id, table_id, created_at, updated_at, json_data, instructions, guest_count) VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $4, $5, $6) RETURNING id',
                 [orderId, restaurantId, tableId, JSON.stringify({ items: mergedOrder }), mergedInstructions, guestCount]
@@ -329,18 +349,66 @@ const createOrUpdateOrder = async (req, res) => {
                 offerFullyAvailed: false,
                 offerPartiallyAvailed: false 
              });
-        } else if (orderResult.rows.length > 0 && !forceNewOrder) {
+        } else if (shouldUpdateExistingOrder) {
+            // Check if the specific order exists (when providedOrderId is used)
+            let orderExists = false;
+            if (providedOrderId) {
+                const specificOrderCheck = await pool.query(
+                    'SELECT * FROM orders WHERE restaurant_id = $1 AND id = $2',
+                    [restaurantId, providedOrderId]
+                );
+                orderExists = specificOrderCheck.rows.length > 0;
+            } else {
+                orderExists = orderResult.rows.length > 0;
+            }
+            
+            // If order doesn't exist but we have a provided orderId, create it
+            if (!orderExists && providedOrderId) {
+                await pool.query(
+                    'INSERT INTO orders (id, restaurant_id, table_id, created_at, updated_at, json_data, instructions, guest_count) VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $4, $5, $6) RETURNING id',
+                    [orderId, restaurantId, tableId, JSON.stringify({ items: mergedOrder }), mergedInstructions, guestCount]
+                );
+                
+                // Notification for new order with specific ID
+                const updatedItems = findDifferences({}, mergedOrder);
+                const updatedItemsWithNames = await attachMenuNames(updatedItems, restaurantId);
+                await insertNotification({
+                    restaurantId,
+                    tableNumber: tableId,
+                    orderId,
+                    actionType: 'order_created',
+                    notificationData: updatedItemsWithNames,
+                    orderType,
+                    captainId,
+                });
+                const notificationData = { orderId, tableId, type: 'order_created', orderType };
+                sendNotificationToRestaurant('Order Created', `New order created for table ${tableId}.`, notificationData, restaurantId, orderType);
+            
+                let msg = `Thanks for your order, it's forwarded to the kitchen. These are your current orders:`;
+                res.status(201).json({ 
+                    message: msg, 
+                    orderId, 
+                    status: 'order_confirmed',
+                    offerFullyAvailed: false,
+                    offerPartiallyAvailed: false 
+                 });
+                return;
+            }
+            
+            // Handle offers for existing orders
             const offerResult = await pool.query(
                 'SELECT * FROM dynamic_offers WHERE restaurant_id = $1 AND table_id = $2 AND active = true',
                 [restaurantId, tableId]
             );
             const offers = offerResult.rows;
             
-            // const updatedOrder = result.rows[0];
-            const updatedOrder = orderResult.rows[0];
+            // Get the order to check for existing offers
+            const orderToCheck = providedOrderId ? 
+                (await pool.query('SELECT * FROM orders WHERE restaurant_id = $1 AND id = $2', [restaurantId, providedOrderId])).rows[0] :
+                orderResult.rows[0];
 
             let offerFullyAvailed= false,offerPartiallyAvailed = false;
-            if (orderType === 'butler' && offerResult.rows.length !== 0 && !updatedOrder.offer_availed) {
+            if (orderType === 'butler' && offerResult.rows.length !== 0 && !orderToCheck.offer_availed) {
                 try {
                     const offerStatus = await getAvailedOffers(mergedOrder,orderId,offers,selectedOffer,restaurantId,tableId);
                     offerFullyAvailed = offerStatus.offerFullyAvailed;
@@ -350,7 +418,7 @@ const createOrUpdateOrder = async (req, res) => {
                     console.error('Error while availing offer:',error);
                 }
             }
-            else if (orderType !== 'butler' && offerResult.rows.length !== 0 && !updatedOrder.offer_availed) {
+            else if (orderType !== 'butler' && offerResult.rows.length !== 0 && !orderToCheck.offer_availed) {
                 await disableAvailableOffers(mergedOrder,offers,restaurantId);
             }
 
