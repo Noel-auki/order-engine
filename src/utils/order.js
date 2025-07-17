@@ -233,7 +233,8 @@ const completeOrder = async (
     total,
     paymentMethod = '',
     razorpayOrderId = '',
-    razorpayPaymentId = ''
+    razorpayPaymentId = '',
+    orderId = null
 ) => {
     const client = await pool.connect();
     let order = null;
@@ -241,21 +242,42 @@ const completeOrder = async (
     try {
         await client.query('BEGIN');
 
-        // 1) fetch & lock
-        const [ orderRes, tempRes ] = await Promise.all([
-            client.query(
-                `SELECT * FROM orders
-                    WHERE restaurant_id = $1 AND table_id = $2
-                    FOR UPDATE`,
-                [restaurantId, tableId]
-            ),
-            client.query(
-                `SELECT * FROM tempOrders
-                    WHERE restaurant_id = $1 AND table_id = $2
-                    FOR UPDATE`,
-                [restaurantId, tableId]
-            ),
-        ]);
+        // 1) fetch & lock - if orderId is provided, use it; otherwise find by table
+        let orderRes, tempRes;
+        
+        if (orderId) {
+            // Complete specific order by ID
+            [orderRes, tempRes] = await Promise.all([
+                client.query(
+                    `SELECT * FROM orders
+                        WHERE restaurant_id = $1 AND id = $2
+                        FOR UPDATE`,
+                    [restaurantId, orderId]
+                ),
+                client.query(
+                    `SELECT * FROM tempOrders
+                        WHERE restaurant_id = $1 AND table_id = $2
+                        FOR UPDATE`,
+                    [restaurantId, tableId]
+                ),
+            ]);
+        } else {
+            // Original behavior - find by table
+            [orderRes, tempRes] = await Promise.all([
+                client.query(
+                    `SELECT * FROM orders
+                        WHERE restaurant_id = $1 AND table_id = $2
+                        FOR UPDATE`,
+                    [restaurantId, tableId]
+                ),
+                client.query(
+                    `SELECT * FROM tempOrders
+                        WHERE restaurant_id = $1 AND table_id = $2
+                        FOR UPDATE`,
+                    [restaurantId, tableId]
+                ),
+            ]);
+        }
 
         if (!orderRes.rows.length && !tempRes.rows.length) {
             await client.query('ROLLBACK');
