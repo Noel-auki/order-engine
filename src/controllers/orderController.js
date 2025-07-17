@@ -162,7 +162,7 @@ const createOrUpdateOrder = async (req, res) => {
 
     const { restaurantId, tableId, items, instructions, 
         userId, otpCheck, orderType = "Dine In", 
-        captainId , selectedOffer = '',isPlacingOffer = false } = req.body;
+        captainId , selectedOffer = '',isPlacingOffer = false, forceNewOrder = false } = req.body;
 
     const uniqueKey = new Date().getTime(); // Generate a unique key using the current timestamp
     let orderId;
@@ -223,7 +223,7 @@ const createOrUpdateOrder = async (req, res) => {
 
         let latestOrder = {};
         let existingInstructions = "";
-        if (orderResult.rows.length > 0) {
+        if (orderResult.rows.length > 0 && !forceNewOrder) {
             orderId = orderResult.rows[0].id;
             latestOrder = orderResult.rows[0].json_data.items || {};
             existingInstructions = orderResult.rows[0].instructions || "";
@@ -299,7 +299,7 @@ const createOrUpdateOrder = async (req, res) => {
         // }
 
 
-        if (orderResult.rows.length === 0) {
+        if (orderResult.rows.length === 0 || forceNewOrder) {
             await pool.query(
                 'INSERT INTO orders (id, restaurant_id, table_id, created_at, updated_at, json_data, instructions, guest_count) VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $4, $5, $6) RETURNING id',
                 [orderId, restaurantId, tableId, JSON.stringify({ items: mergedOrder }), mergedInstructions, guestCount]
@@ -329,7 +329,7 @@ const createOrUpdateOrder = async (req, res) => {
                 offerFullyAvailed: false,
                 offerPartiallyAvailed: false 
              });
-        } else {
+        } else if (orderResult.rows.length > 0 && !forceNewOrder) {
             const offerResult = await pool.query(
                 'SELECT * FROM dynamic_offers WHERE restaurant_id = $1 AND table_id = $2 AND active = true',
                 [restaurantId, tableId]
@@ -686,8 +686,8 @@ exports.fetchActiveOrders = async (req, res) => {
 
 exports.completeOrder = async (req, res) => {
     const { restaurantId, tableId } = req.params;
-    const { total, paymentMethod } = req.body;
-    const isCompleted = await completeOrder(restaurantId, tableId, total, (paymentMethod ? paymentMethod : ''));
+    const { total, paymentMethod, orderId } = req.body;
+    const isCompleted = await completeOrder(restaurantId, tableId, total, (paymentMethod ? paymentMethod : ''), '', '', orderId);
 
     if (isCompleted) {
         await pool.query(
