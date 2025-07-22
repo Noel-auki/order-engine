@@ -107,7 +107,7 @@ const findDifferences = (latestOrder, newOrder) => {
 };
 
 
-const attachMenuNames = async (updatedItems, restaurantId) => {
+const attachMenuNames = async (updatedItems, restaurantId, openItemId = null) => {
     // Try to get the mapping from cache.
     let menuMapping = menuCache.get(restaurantId);
     if (!menuMapping) {
@@ -124,8 +124,9 @@ const attachMenuNames = async (updatedItems, restaurantId) => {
         menuCache.set(restaurantId, menuMapping);
     }
 
-    // Attach the name property to each updated item.
+    // Attach the name property to each updated item, except openItemId
     Object.keys(updatedItems).forEach(itemId => {
+        if (itemId === openItemId) return; // skip open item
         if (menuMapping[itemId]) {
             updatedItems[itemId].name = menuMapping[itemId];
         }
@@ -327,7 +328,7 @@ const createOrUpdateOrder = async (req, res) => {
             
             // Notification logic disabled for local DB-only operation
             const updatedItems = findDifferences({}, mergedOrder);
-            const updatedItemsWithNames = await attachMenuNames(updatedItems, restaurantId);
+            const updatedItemsWithNames = await attachMenuNames(updatedItems, restaurantId, openItemId);
             await insertNotification({
                 restaurantId,
                 tableNumber: tableId,
@@ -371,7 +372,7 @@ const createOrUpdateOrder = async (req, res) => {
                 
                 // Notification for new order with specific ID
                 const updatedItems = findDifferences({}, mergedOrder);
-                const updatedItemsWithNames = await attachMenuNames(updatedItems, restaurantId);
+                const updatedItemsWithNames = await attachMenuNames(updatedItems, restaurantId, openItemId);
                 await insertNotification({
                     restaurantId,
                     tableNumber: tableId,
@@ -422,7 +423,7 @@ const createOrUpdateOrder = async (req, res) => {
                 await disableAvailableOffers(mergedOrder,offers,restaurantId);
             }
 
-            const updatedItemsWithNames = await attachMenuNames(updatedItems, restaurantId);
+            const updatedItemsWithNames = await attachMenuNames(updatedItems, restaurantId, openItemId);
             
             let msg = `Thanks for your order, it's forwarded to the kitchen.\nThese are your current orders:`;
             if (offerFullyAvailed) {
@@ -507,28 +508,33 @@ exports.createOrUpdateOrder = createOrUpdateOrder;
 
 function transformOpenItems(items, openItemId) {
     const transformed = {};
-    for (const [id, itemData] of Object.entries(items)) {
-      if (id === openItemId && itemData.openItemName && itemData.openItemQty && itemData.openItemPrice) {
-        transformed[id] = {
-          name: itemData.openItemName,
-          customizations: [
-            {
-              qty: itemData.openItemQty,
-              price: itemData.openItemPrice,
-              addons: {},
-              isBasic: true,
-              variation: {},
-              instructions: ""
-            }
-          ]
-        };
-      } else {
-        transformed[id] = itemData;
-      }
+    for (const [id, itemData] of Object.entries(items)) { 
+        // Check if the id starts with openItemId followed by underscore
+        if (openItemId && id.startsWith(`${openItemId}_`) && itemData.name && itemData.customizations?.length > 0) {
+            // Get price from the first customization
+            const customization = itemData.customizations[0];
+            
+            // Convert name to camelCase and remove special characters
+            const cleanName = itemData.name
+                .toLowerCase()
+                .replace(/[^a-zA-Z0-9 ]/g, '')  // Remove special characters
+                .replace(/\s+(.)/g, (match, group) => group.toUpperCase())  // Convert to camelCase
+                .replace(/\s/g, '');  // Remove remaining spaces
+            
+            // Create unique ID by combining original ID, cleaned name, and price
+            const uniqueId = `${openItemId}_${cleanName}_${customization.price}`;
+            
+            transformed[uniqueId] = {
+                name: itemData.name,
+                customizations: itemData.customizations
+            };
+        } else {
+            console.log("Open Item Not Found");
+            transformed[id] = itemData;
+        }
     }
-    console.log(transformed);
     return transformed;
-  }
+}
 
 exports.offerOrder = async (req, res) => {
 
