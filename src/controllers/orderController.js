@@ -308,7 +308,7 @@ const createOrUpdateOrder = async (req, res) => {
         //             message: 'Some items are out of stock.',
         //             inactiveItems
         //         });
-        //     }
+        //     } 
         // }
         // if (isOffer) {
 
@@ -322,8 +322,8 @@ const createOrUpdateOrder = async (req, res) => {
         if (shouldCreateNewOrder) {
             // Create new order with generated orderId
             await pool.query(
-                'INSERT INTO orders (id, restaurant_id, table_id, created_at, updated_at, json_data, instructions, guest_count) VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $4, $5, $6) RETURNING id',
-                [orderId, restaurantId, tableId, JSON.stringify({ items: mergedOrder }), mergedInstructions, guestCount]
+                'INSERT INTO orders (id, restaurant_id, table_id, assigned_to, created_at, updated_at, json_data, instructions, guest_count) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $5, $6, $7) RETURNING id',
+                [orderId, restaurantId, tableId, captainId || null, JSON.stringify({ items: mergedOrder }), mergedInstructions, guestCount]
             );
             
             // Notification logic disabled for local DB-only operation
@@ -366,8 +366,8 @@ const createOrUpdateOrder = async (req, res) => {
             // If order doesn't exist but we have a provided orderId, create it
             if (!orderExists && providedOrderId) {
                 await pool.query(
-                    'INSERT INTO orders (id, restaurant_id, table_id, created_at, updated_at, json_data, instructions, guest_count) VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $4, $5, $6) RETURNING id',
-                    [orderId, restaurantId, tableId, JSON.stringify({ items: mergedOrder }), mergedInstructions, guestCount]
+                    'INSERT INTO orders (id, restaurant_id, table_id, assigned_to, created_at, updated_at, json_data, instructions, guest_count) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $5, $6, $7) RETURNING id',
+                    [orderId, restaurantId, tableId, captainId || null, JSON.stringify({ items: mergedOrder }), mergedInstructions, guestCount]
                 );
                 
                 // Notification for new order with specific ID
@@ -446,10 +446,10 @@ const createOrUpdateOrder = async (req, res) => {
 
             const result = await pool.query(
                 `UPDATE orders 
-                 SET json_data = $1, instructions = $2, updated_at = CURRENT_TIMESTAMP 
-                 WHERE id = $3 
+                 SET json_data = $1, instructions = $2, updated_at = CURRENT_TIMESTAMP, assigned_to = $3 
+                 WHERE id = $4 
                  RETURNING *`,
-                [JSON.stringify({ items: mergedOrder }), mergedInstructions, orderId]
+                [JSON.stringify({ items: mergedOrder }), mergedInstructions, captainId || null, orderId]
             );
 
             
