@@ -852,6 +852,15 @@ exports.removeItemFromOrder = async (req, res) => {
             return true;
         }
 
+         function getAddonIds(customization) {
+            if (!customization.addons) return [];
+            return Object
+              .values(customization.addons)   // → [ [...], [...] ]
+              .flat()                         // → [ { id: "...", … }, … ]
+              .map(a => a.id);                // → [ "30191498", ... ]
+          }
+       
+
         // Inside your removeItemFromOrder function (or similar), when filtering customizations:
         const updatedCustomizations = items[itemId].customizations.filter((customization) => {
             // Get keys from the customization's addons and variation objects.
@@ -859,6 +868,7 @@ exports.removeItemFromOrder = async (req, res) => {
             const customizationVariationKeys = customization.variation ? Object.keys(customization.variation) : [];
 
             let remove = false;
+           
 
             // Case 1: Both variationId and addons are provided.
             if (variationId && Array.isArray(addons) && addons.length > 0) {
@@ -882,11 +892,9 @@ exports.removeItemFromOrder = async (req, res) => {
             }
             // Case 3: Only addons is provided (variationId is not provided or empty).
             else if ((!variationId || variationId === "") && Array.isArray(addons) && addons.length > 0) {
-                if (
-                    customization.addons &&
-                    arraysEqual(customizationAddonsKeys, addons) &&
-                    (!customization.variation || Object.keys(customization.variation).length === 0)
-                ) {
+                 const customizationAddonIds = getAddonIds(customization);
+               if (arraysEqual(customizationAddonIds, addons) &&
+                    (!customization.variation || Object.keys(customization.variation).length === 0)) {
                     remove = true;
                 }
             }
